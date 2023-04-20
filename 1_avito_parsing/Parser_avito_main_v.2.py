@@ -5,6 +5,7 @@ import datetime
 import time
 import glob
 import os
+import re
 import pandas as pd
 import numpy as np
 from avito_urls import *
@@ -54,10 +55,10 @@ def get_data(url, headless=True):
         for page in range(1, pages_number + 1):
             if page == 1:
                 # на первой итерации ничего не происходит, запрос к урл 1 страницы уже был
-                print(f'Парсинг {page} страницы...')
-                print(f'''Парсинг {page} страницы завершен.''')
+                print(f'Парсинг {page} страницы...', end='')
+                print(f'''завершено.''')
             else:
-                print(f'Парсинг {page} страницы...')
+                print(f'Парсинг {page} страницы...', end='')
 
                 # получаем и записываем код следующей страницы в тот же файл
                 driver.get(url=url + f'&p={page}')
@@ -71,9 +72,10 @@ def get_data(url, headless=True):
 
                     f.write(driver.page_source)
 
-                print(f'''Парсинг {page} страницы завершен.''')
-                end_parsing_url = time.time() - start_parsing_url
-                print(f'Время сбора кода страниц: {int(end_parsing_url)} сек.')
+                print(f'''завершено.''')
+
+        end_parsing_url = time.time() - start_parsing_url
+        print(f'Время сбора кода страниц: {int(end_parsing_url)} сек.')
     except Exception as ex:
         print(ex)
     finally:
@@ -89,22 +91,49 @@ def get_flat_info(url, headless=True):
         options.add_argument('--headless')
     driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
     try:
+        print(f'Подключаюсь к url квартиры: {url}...', end='')
         driver.get(url=url)
         time.sleep(5)
         flat_page_code = driver.page_source
         flat_soup = BeautifulSoup(flat_page_code, 'html.parser')
-        flat_square_value = flat_soup.find_all('li', class_='params-paramsList__item-appQw')[1] \
-                                     .get_text().split(' ')[2][:-3]
-        flat_floor = flat_soup.find_all('li', class_='params-paramsList__item-appQw')[4] \
-                                     .get_text().split(' ')[0]
-        flat_floors_in_house = flat_soup.find_all('li', class_='params-paramsList__item-appQw')[4] \
-            .get_text().split(' ')[-1]
+        params_li = flat_soup.find_all('li', class_='params-paramsList__item-appQw')
+        flat_square_value, flat_floor, flat_floors_in_house = 1, '-', '-'
+
+        params_needed = 3  # в дальнейшем, число может быть увеличено
+        count = 0
+        for i in range(len(params_li)):
+            if any(x in params_li[i].find('span', class_='desktop-3a1zuq')
+                    .get_text() for x in ('Общая площадь', 'Площадь комнаты')):
+                flat_square_value = float(params_li[i].get_text()
+                                          .replace('Общая площадь', '')
+                                          .replace('Площадь комнаты', '')
+                                          .replace(': ', '')
+                                          .replace('\xa0', ' ')
+                                          .split()[0])
+                count += 1
+                if count >= 3:
+                    break
+            elif 'Этаж' in params_li[i].find('span', class_='desktop-3a1zuq').get_text():
+                flat_floor = int(params_li[i].get_text()
+                                 .replace('Этаж', '')
+                                 .replace(': ', '')
+                                 .split(' ')[0])
+                flat_floors_in_house = int(params_li[i].get_text()
+                                           .replace('Этаж', '')
+                                           .replace(': ', '')
+                                           .split(' ')[-1])
+                count += (1 + 1)
+                if count >= params_needed:
+                    print('успешно завершено.')
+                    break
+        if count < 3:
+            print(f'На странице не хватает параметров: {url}')
     except Exception as ex:
         print(ex)
     finally:
         driver.close()
         driver.quit()
-        return float(flat_square_value), int(flat_floor), int(flat_floors_in_house)
+        return flat_square_value, flat_floor, flat_floors_in_house
 
 
 def number_of_pages(file_path):
@@ -120,39 +149,6 @@ def number_of_pages(file_path):
 
     print(f'Количество страниц: {pages_number}')
     return pages_number
-
-
-# def get_items_urls(file_path):
-#     """Функция возвращает список значений с URLами каждого объявления на странице"""
-#     with open(file_path) as file:
-#         page_code = file.read()
-#
-#     soup = BeautifulSoup(page_code, 'html.parser')
-#     item_divs = soup.find_all('div', class_='iva-item-body-KLUuy')
-#
-#     urls = []
-#     for item in item_divs:
-#         item_url = item.find('div', class_='iva-item-titleStep-pdebR').find('a').get('href')
-#         urls.append('https://www.avito.ru' + item_url)
-#
-#     return urls
-
-
-# def get_items_price(file_path):
-#     """Функция возвращает список значений со стоимостями объектов из каждого объявления на странице"""
-#     with open(file_path) as file:
-#         page_code = file.read()
-#
-#     soup = BeautifulSoup(page_code, 'html.parser')
-#     item_divs = soup.find_all('div', class_='iva-item-priceStep-uq2CQ')
-#
-#     prices = []
-#     for item in item_divs:
-#         item_price = item.find('span', class_='price-price-JP7qe') \
-#             .find('meta', itemprop="price").get('content')
-#         prices.append(int(item_price))
-#
-#     return prices
 
 
 def convert_to_normal_date(date):
@@ -207,36 +203,77 @@ def get_item_parameters(file_path):
         item_url = item.find('div', class_='iva-item-titleStep-pdebR').find('a').get('href')
 
         '2. Prices'
-        item_price = item.find('div', class_='iva-item-priceStep-uq2CQ')\
-                         .find('span', class_='price-price-JP7qe') \
-                         .find('meta', itemprop="price")\
-                         .get('content')
+        item_price = item.find('div', class_='iva-item-priceStep-uq2CQ') \
+            .find('span', class_='price-price-JP7qe') \
+            .find('meta', itemprop="price") \
+            .get('content')
 
         '3. Number of rooms'
-        if any(substr in item.find('h3').get_text() for substr in ['Квартира-студия', 'квартира-студия', 'Студия',
-                                                                   'студия', 'Апартаменты-студия',
-                                                                   'апартаменты-студия']):
+        if any(substr in item.find('h3').get_text().lower() for substr in ['квартира-студия', 'студия',
+                                                                           'апартаменты-студия']):
             item_rooms_number = 'Студия'
+        elif any(substr in item.find('h3').get_text().lower() for substr in ['доля']):
+            item_rooms_number = 'Доля в кв.'
+        elif any(substr in item.find('h3').get_text().lower() for substr in ['планировка']):
+            item_rooms_number = 'Своб. планировка'
+        elif any(substr in item.find('h3').get_text().lower() for substr in ['более', 'больше']):
+            item_rooms_number = f'{item.find("h3").get_text().split(" ")[0]} и более'
+        elif any(substr in item.find('h3').get_text().lower() for substr in ['комната']):
+            item_rooms_number = 'Комната в кв.'
+        elif any(substr in item.find('h3').get_text().lower() for substr in ['аукцион']):
+            item_rooms_number = item.find('h3').get_text().split('-').split(': ')[-1]
         else:
-            item_rooms_number = item.find('h3').get_text().split('-')[0][-1]
+            item_rooms_number = item.find('h3').get_text().split('-')[0]
 
         '4. Square, Floor, floors in house'
-        item_floor = item.find('h3').get_text().split(', ')[-1].split('\xa0')[0].split('/')[0]
-        item_house_floors = item.find('h3').get_text().split(', ')[-1].split('\xa0')[0].split('/')[-1]
-        if len(item.find('h3').get_text().split(', ')) >= 2 and item_floor.isdigit():
-            item_square = float(item.find('h3').get_text().split(', ')[1].split('\xa0')[0].replace(',', '.'))
-            item_floor, item_house_floors = int(item_floor), int(item_house_floors)
+        if len(item.find('h3').get_text().split(', ')) >= 2:
+            item_floor = item.find('h3') \
+                .get_text() \
+                .split(', ')[-1] \
+                .replace('\xa0', ' ') \
+                .split()[0] \
+                .split('/')[0]
+            item_house_floors = item.find('h3') \
+                .get_text() \
+                .split(', ')[-1] \
+                .replace('\xa0', ' ') \
+                .split()[0] \
+                .split('/')[-1]
+            if item_rooms_number == 'Комната в кв.':
+                item_square = item.find('h3') \
+                    .get_text().split(', ')[0] \
+                    .replace('\xa0', ' ') \
+                    .split()[1] \
+                    .replace(',', '.')
+            else:
+                item_square = item.find('h3') \
+                    .get_text().split(', ')[1] \
+                    .replace('\xa0', ' ') \
+                    .split()[0] \
+                    .replace(',', '.')
+            if (item_floor.isdigit()) and (('.' in item_square) or item_square.isdigit()):
+                item_square = float(item_square)
+                item_floor, item_house_floors = int(item_floor), int(item_house_floors)
+            else:
+                flat_url = 'https://www.avito.ru' + item.find('a', class_='link-link-MbQDP').get('href')
+                print(f'Неверный тип данных, нужно зайти на страницу квартиры: {flat_url}')
+                item_square, item_floor, item_house_floors = get_flat_info(flat_url)
+                if any(type(x) == 'str' for x in (item_square, item_floor, item_house_floors)):
+                    print(f'Строковое значение {(item_square, item_floor, item_house_floors)} в url: {flat_url}')
         else:
             flat_url = 'https://www.avito.ru' + item.find('a', class_='link-link-MbQDP').get('href')
+            print(f'Недостаточно информации, нужно зайти на страницу квартиры: {flat_url}')
             item_square, item_floor, item_house_floors = get_flat_info(flat_url)
+            if any(type(x) == 'str' for x in (item_square, item_floor, item_house_floors)):
+                print(f'Строковое значение {(item_square, item_floor, item_house_floors)} в url: {flat_url}')
 
         '5. Date'
         item_date_day = convert_to_normal_date(item.find('div', attrs={"data-marker": "item-date"}).get_text())
         item_date_text = item.find('div', attrs={"data-marker": "item-date"}).get_text()
 
         '6. Address'
-        item_address = item.find('div', class_='geo-address-fhHd0 text-text-LurtD text-size-s-BxGpL')\
-                           .find('span').get_text()
+        item_address = item.find('div', class_='geo-address-fhHd0 text-text-LurtD text-size-s-BxGpL') \
+            .find('span').get_text()
 
         '7. Metro, distance (time) to metro'
         metro_div = item.find('div', class_='geo-georeferences-SEtee text-text-LurtD text-size-s-BxGpL')
@@ -268,28 +305,26 @@ def get_item_parameters(file_path):
 
 def main():
     """Запускаем цикл для итерации по списку ссылок на объявления в разных районах СПб"""
-    for district, url in zip(list(url_dict.keys())[14:], list(url_dict.values())[14:]):  # url + "&p=1"
+    for district, url in zip(list(url_dict.keys()), list(url_dict.values())):  # url + "&p=1"
         print(f'Начинаю парсинг объявлений в {district.replace("ий", "ом")} районе')
 
         """1. (РАСКОММЕНТИРОВАТЬ!!!) Блок сбора кода страниц; для отмены фонового режима установить 
               параметр headless=False"""
-        # file_path, pages_number = get_data(url=url, headless=True)  # True - для запуска в фоновом режиме
+        file_path, pages_number = get_data(url=url, headless=True)  # True - для запуска в фоновом режиме
 
         """2. (ЗАКОМЕНТИРОВАТЬ!!!) Блок для корректировки дальнейшей работы функции, без повторных обращений к сайту 
               (когда код страниц уже есть: например, функция get_data отработала без ошибок, а при сборе параметров 
               ошибка)"""
-        today = datetime.datetime.today().strftime('%d.%m.%Y')
-        file_path: str = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing' \
-                         f'/flats_from_avito/page_codes/Page_code_{today}.txt'
-        pages_number = 1  # number_of_pages(file_path)
+        # today = datetime.datetime.today().strftime('%d.%m.%Y')
+        # file_path: str = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing' \
+        #                  f'/flats_from_avito/page_codes/Page_code_19.04.2023.txt'
+        # pages_number = 1  # number_of_pages(file_path)
 
         "3. Формирование списков с данными по объявлениям"
         start_parsing_soup = time.time()
 
-        # urls = get_items_urls(file_path)
-        # prices = get_items_price(file_path)
         urls, prices, room_numbers, squares, floors, floors_in_house, \
-        dates_days, dates_text, addresses, metro, metro_distance = get_item_parameters(file_path)
+            dates_days, dates_text, addresses, metro, metro_distance = get_item_parameters(file_path)
 
         end_parsing_soup = time.time() - start_parsing_soup
         print(f'''Время сбора конкретных данных из кода страниц: {int(end_parsing_soup)} сек., в среднем на каждое 
@@ -310,27 +345,26 @@ def main():
         ''')
 
         "4. Формирование итогового датафрейма и сохранение его в .csv/xlsx"
-        total_df = pd.DataFrame({'url': urls,
-                                 'Cost': prices,
-                                 'Rooms': room_numbers,
-                                 'Square': squares,
-                                 'Cost_per_m2': [int(x / a) for x, a in zip(prices, squares)],
-                                 'Floor': floors,
-                                 'Floors_in_house': floors_in_house,
-                                 'District': district,
-                                 'Address': addresses,
-                                 'Metro': metro,
-                                 'Metro_distance': metro_distance,
-                                 'Date': dates_days,
-                                 'Date_note': dates_text})
+        total_df = pd.DataFrame({'Ссылка': urls,
+                                 'Стоимость': prices,
+                                 'Кол-во комнат': room_numbers,
+                                 'Площадь': squares,
+                                 'Стоимость 1 м.кв.': [int(x / a) for x, a in zip(prices, squares)],
+                                 'Этаж': floors,
+                                 'Этажей в доме': floors_in_house,
+                                 'Район': district,
+                                 'Адрес': addresses,
+                                 'Метро': metro,
+                                 'Время до метро': metro_distance,
+                                 'Дата': dates_days,
+                                 'Дата прим.': dates_text})
 
-        month = datetime.datetime.today().strftime('%Y.%m')
-        today_date = datetime.datetime.today().strftime('%Y.%m.%d')
-        folder_path = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing/flats_from_avito/' \
-                      f'tables_by_districts_{month}'
-        if not os.path.exists(folder_path):
-            os.mkdir(folder_path)
-        total_df.to_csv(f'{folder_path}/flats_from_avito_{district}_{today_date}.csv')
+        if not os.path.exists(folder_path_monthly):
+            os.mkdir(folder_path_monthly)
+            os.mkdir(folder_path_daily)
+        elif not os.path.exists(folder_path_daily):
+            os.mkdir(folder_path_daily)
+        total_df.to_csv(f'{folder_path_daily}/flats_from_avito_{district}.csv')
 
         print(f'Таблица с объявлениями в {district.replace("ий", "ом")} районе записана в размере {len(urls)} строк')
 
@@ -345,9 +379,9 @@ def concat_tables(path, date):
             is_right_answer = True
 
             files = glob.glob(f'{path}/*.csv', recursive=True)
-            df = pd.concat([pd.read_csv(file).drop(columns='Unnamed: 0') for file in files])\
-                   .drop_duplicates()\
-                   .reset_index(drop=True)
+            df = pd.concat([pd.read_csv(file).drop(columns='Unnamed: 0') for file in files]) \
+                .drop_duplicates() \
+                .reset_index(drop=True)
 
             if not os.path.exists(path + f'/All_flats'):
                 os.mkdir(path + '/All_flats')
@@ -364,15 +398,19 @@ def concat_tables(path, date):
 if __name__ == "__main__":
     start = time.time()
 
+    "Объявляем временные переменные и пути для сохранения файлов"
+    month = datetime.datetime.today().strftime('%Y.%m')
+    today_date = datetime.datetime.today().strftime('%Y.%m.%d')
+    folder_path_monthly = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing/' \
+                          f'flats_from_avito/tables_by_districts_{month}'
+    folder_path_daily = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing/' \
+                        f'flats_from_avito/tables_by_districts_{month}/{today_date}'
+
     """Запускаем основную функцию"""
-    # main()
+    main()
 
     """Если нужно, запускаем функцию склеивания таблиц. Можно запустить отдельно, без запуска main."""
-    date = datetime.datetime.today().strftime('%Y.%m')
-    files_folder = f'/Users/dmitrijdolgopolov/Documents/1_study_python/projects/1_avito_parsing' \
-                   f'/flats_from_avito/tables_by_districts_{date}'  # заменить при необходимости
-    concat_tables(files_folder, date)
-
+    concat_tables(folder_path_daily, today_date)
 
     end = time.time() - start
     print(f'Время выполнения программы: {int(end)} сек.')
