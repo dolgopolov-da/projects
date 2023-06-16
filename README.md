@@ -1,13 +1,13 @@
 # Projects
 
-**1. Avito_parser**
+## 1. Avito_parser
 
 Парсер объявлений о продаже недвижимости.
 Проход по страницам с объявлениями из поиска, сохранение кода страниц в файл.
 Парсинг кода страниц, сохранение данных из объявлений в csv таблицы.
 
 
-## Usage
+### Usage
 
 *Setup*
 - Скопировать каталог "1_avito_parsing"
@@ -25,7 +25,7 @@
 Pages code and .csv files saves to dir "flats_from_avito"
 
 
-**2. Dashboard in DataLens**
+## 2. Dashboard in DataLens
 Отображение данных из csv таблиц, полученных парсером, в удобном формате дашборда на Yandex DataLens
 Ссылка на дашборд: https://datalens.yandex.ru/ivkbx3xexkmg8-avito-nedvizhimost
 
